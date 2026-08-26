@@ -1,0 +1,10 @@
+{
+  "webgis_api_url": "https://your-webgis-api.onrender.com",
+  "import_token": "YOUR_IMPORT_TOKEN",
+  "s3_endpoint": "https://your-project-ref.storage.supabase.co/storage/v1/s3",
+  "s3_access_key_id": "YOUR_S3_ACCESS_KEY_ID",
+  "s3_secret_access_key": "YOUR_S3_SECRET_ACCESS_KEY",
+  "s3_region": "auto",
+  "s3_bucket": "ban-do-nen-tiles",
+  "tile_public_base_url": "https://your-project-ref.supabase.co/storage/v1/object/public/ban-do-nen-tiles"
+}

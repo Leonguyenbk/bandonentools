@@ -1,0 +1,9 @@
+config.local.json
+key.txt
+.venv/
+__pycache__/
+*.pyc
+*.log
+build/
+dist/
+test_data/_tmp_tiles/
