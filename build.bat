@@ -1,11 +1,23 @@
 @echo off
-echo ==============================================
-echo Dang build BandoNen_Tool.exe bang PyInstaller...
-echo ==============================================
-.venv\Scripts\pyinstaller --noconfirm --onefile --windowed --name "BandoNen_Tool" --collect-all rasterio --collect-all mercantile --copy-metadata boto3 app_gui.py
+echo =======================================================
+echo Dang build BandoNen_Tool.exe (CustomTkinter + Icon Pro)...
+echo =======================================================
+
+.venv\Scripts\pyinstaller --noconfirm BandoNen_Tool.spec
+
 if exist config.local.json (
     copy /Y config.local.json dist\config.local.json
 )
+if exist config.example.json (
+    copy /Y config.example.json dist\config.example.json
+)
+if not exist dist\assets (
+    mkdir dist\assets
+)
+copy /Y assets\* dist\assets\
+
 echo.
-echo Build hoan tat! File thuc thi nam tai: dist\BandoNen_Tool.exe
+echo =======================================================
+echo Build hoan tat! File thuc thi: dist\BandoNen_Tool.exe
+echo =======================================================
 pause

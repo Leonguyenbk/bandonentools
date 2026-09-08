@@ -2,15 +2,21 @@
 from PyInstaller.utils.hooks import collect_all
 from PyInstaller.utils.hooks import copy_metadata
 
-datas = []
+datas = [('assets', 'assets')]
 binaries = []
-hiddenimports = []
+hiddenimports = ['PIL', 'PIL.Image', 'PIL.ImageTk', 'customtkinter', 'darkdetect', 'boto3', 'botocore', 'requests', 'urllib3', 'geotiff_reader', 'vn2000_crs', 'proj_setup']
+
 datas += copy_metadata('boto3')
-tmp_ret = collect_all('rasterio')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('mercantile')
+datas += copy_metadata('botocore')
+
+tmp_ret = collect_all('customtkinter')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
+tmp_ret = collect_all('rasterio')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
+tmp_ret = collect_all('mercantile')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 a = Analysis(
     ['app_gui.py'],
@@ -46,4 +52,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='assets/icon.ico',
 )

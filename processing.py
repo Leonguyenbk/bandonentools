@@ -10,6 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
+import geotiff_reader
 import kml_vector_reader
 import kmz_reader
 import raster_pipeline
@@ -20,14 +21,37 @@ from config import ToolConfig
 
 _SO_TO_RE = re.compile(r"(\d+)(?!.*\d)")
 
+TIFF_EXTS = (".tif", ".tiff")
+
+
+def is_geotiff_path(path: str) -> bool:
+    return path.lower().endswith(TIFF_EXTS)
+
 
 def infer_so_to_from_filename(filename: str) -> str:
-    """Suy số tờ từ tên file — lấy CỤM SỐ CUỐI CÙNG trong tên (vd
-    '24169_15.kmz' -> '15', 'To_14.kmz' -> '14'). Trả '' nếu không tìm
-    thấy số nào — không đoán bừa, để người dùng tự nhập."""
+    """Suy số tờ từ tên file:
+    Hỗ trợ cả số nguyên lẫn số tờ có chữ/ký tự phụ (vd:
+    '24169_15.kmz' -> '15', '24169_02.kmz' -> '02', 'To_14.kmz' -> '14',
+    'To_1A.kmz' -> '1A', 'To_1-1.kmz' -> '1-1', 'BDDC_To_05A.tif' -> '05A').
+    Trả '' nếu không tìm thấy số nào để người dùng tự nhập.
+    """
     stem = filename.rsplit(".", 1)[0]
-    match = _SO_TO_RE.search(stem)
-    return match.group(1) if match else ""
+    # 1. Mẫu có tiền tố To rõ ràng: To_14, To14A, To-1-1, BDDC_To_05A
+    m = re.search(r"(?:^|[_\-\s])to[_\-\s]*([0-9]+[a-zA-Z0-9_\-]*)", stem, re.IGNORECASE)
+    if m:
+        return m.group(1).strip("_-")
+    # 2. Mẫu sau mã xã (4-5 chữ số): 24169_15, 24169-02A
+    m = re.search(r"^\d{4,5}[_\-\s]+([0-9]+[a-zA-Z0-9_\-]*)", stem)
+    if m:
+        return m.group(1).strip("_-")
+    # 3. Cụm số kèm hậu tố chữ/gạch cuối cùng: vd 24169_15 -> 15, To_1A -> 1A
+    m = re.search(r"(\d+[a-zA-Z0-9\-_]*)$", stem)
+    if m:
+        return m.group(1).strip("_-")
+    m = re.search(r"(\d+[a-zA-Z]?)(?!.*\d)", stem)
+    if m:
+        return m.group(1)
+    return ""
 
 
 @dataclass
@@ -50,6 +74,8 @@ class ProcessOptions:
     max_zoom: int | None = None
     upload_workers: int = 32
     export_local_dir: str | None = None  # Nếu có giá trị -> xuất ra ổ đĩa máy tính, không upload S3
+    geotiff_src_crs: str | None = None  # Ghi đè CRS nguồn cho file .tif (vd "EPSG:9218" hoặc "Đắk Nông" hoặc "108.5")
+    geotiff_force_override: bool = True  # Ép buộc áp dụng CRS đã chọn thay vì dùng metadata trong file TIF
 
 
 def _export_tiles_to_disk(target_dir: str, tiles, on_progress=None) -> int:
@@ -89,14 +115,10 @@ def process_one(cfg: ToolConfig | None, job: FileJob, options: ProcessOptions, o
         if on_status:
             on_status(job)
 
-    # Nếu upload thì cần đủ mã xã và số tờ; nếu chỉ xuất local thì số tờ có thể fallback theo tên
-    so_to_str = job.so_to.strip() or infer_so_to_from_filename(job.filename) or "1"
-    try:
-        so_to_int = int(so_to_str)
-    except ValueError:
-        job.error = "Số tờ phải là số nguyên"
-        _set("Lỗi", job.error)
-        return
+    # Hỗ trợ số tờ linh hoạt: cả chuỗi (vd 1A, 01, 1-1, phu_02) lẫn số nguyên
+    so_to_raw = (job.so_to or "").strip() or infer_so_to_from_filename(job.filename) or "1"
+    # Chuẩn hoá ký tự an toàn cho thư mục và URL (loại bỏ ký tự cấm hệ điều hành: \ / : * ? " < > |)
+    so_to_safe = re.sub(r'[\\/:*?"<>|]', "_", so_to_raw).strip(" _-") or "1"
 
     is_local_export = bool(options.export_local_dir)
     if not is_local_export:
@@ -104,19 +126,29 @@ def process_one(cfg: ToolConfig | None, job: FileJob, options: ProcessOptions, o
             job.error = "Thiếu mã xã"
             _set("Lỗi", job.error)
             return
-        if not job.so_to.strip():
+        if not (job.so_to or "").strip():
             job.error = "Thiếu số tờ"
             _set("Lỗi", job.error)
             return
 
     try:
-        _set("Đang đọc KMZ")
+        is_tiff = is_geotiff_path(job.path)
+        _set("Đang đọc GeoTIFF" if is_tiff else "Đang đọc KMZ")
         with open(job.path, "rb") as handle:
             data = handle.read()
 
-        overlays = kmz_reader.read_kmz(data)
-
-        if overlays:
+        if is_tiff:
+            overlay_3857, bbox = geotiff_reader.read_geotiff_as_overlay(
+                data,
+                override_crs=options.geotiff_src_crs,
+                file_path=job.path,
+                force_override=options.geotiff_force_override,
+                ma_xa=job.ma_xa,
+            )
+            overlays_3857 = [overlay_3857]
+            auto_min_zoom, auto_max_zoom = raster_pipeline.compute_zoom_range(overlays_3857)
+            _set("Đang tính zoom/tạo tile", "ảnh raster GeoTIFF độc lập")
+        elif (overlays := kmz_reader.read_kmz(data)):
             bbox = kmz_reader.union_bbox(overlays)
             _set("Đang tính zoom/tạo tile", "ảnh có sẵn (GroundOverlay)")
             overlays_3857 = [raster_pipeline.georeference_and_reproject(o) for o in overlays]
@@ -158,7 +190,7 @@ def process_one(cfg: ToolConfig | None, job: FileJob, options: ProcessOptions, o
         # -------------------------------------------------------------
         if is_local_export:
             sub_folder_name = (
-                f"{job.ma_xa.strip()}_{so_to_int}" if job.ma_xa.strip() else f"to_{so_to_int}"
+                f"{job.ma_xa.strip()}_{so_to_safe}" if job.ma_xa.strip() else f"to_{so_to_safe}"
             )
             out_folder = os.path.join(options.export_local_dir, sub_folder_name)
             os.makedirs(out_folder, exist_ok=True)
@@ -187,7 +219,7 @@ def process_one(cfg: ToolConfig | None, job: FileJob, options: ProcessOptions, o
             return
 
         _set("Đang upload", f"0/{len(tiles)} (Cắt xong {len(tiles)} tile trong {t_gen_elapsed:.1f}s)")
-        key_prefix = f"{job.ma_xa.strip()}/{so_to_int}/v{options.tile_version}"
+        key_prefix = f"{job.ma_xa.strip()}/{so_to_safe}/v{options.tile_version}"
 
         t_upload_start = time.perf_counter()
 
@@ -213,14 +245,19 @@ def process_one(cfg: ToolConfig | None, job: FileJob, options: ProcessOptions, o
         _set("Đang đăng ký", f"Đã upload {result.uploaded} tile ({t_total_upload:.1f}s)")
         tile_url = f"{cfg.tile_public_base_url}/{key_prefix}/{{z}}/{{x}}/{{y}}.png"
         geom = webgis_client.make_rectangle_geojson(west, south, east, north)
+        try:
+            so_to_api: int | str = int(so_to_raw)
+        except ValueError:
+            so_to_api = so_to_raw
+
         webgis_client.register_sheet(
-            cfg, job.ma_xa.strip(), so_to_int, geom, tile_url,
+            cfg, job.ma_xa.strip(), so_to_api, geom, tile_url,
             options.tile_version, min_zoom, max_zoom,
         )
 
         total_time = t_gen_elapsed + t_total_upload
         _set("Hoàn thành", f"{result.uploaded} tile (z{min_zoom}-z{max_zoom} trong {total_time:.1f}s)")
-    except kmz_reader.KmzError as exc:
+    except (kmz_reader.KmzError, geotiff_reader.GeoTiffError) as exc:
         job.error = str(exc)
         _set("Lỗi", job.error)
     except webgis_client.RegisterError as exc:

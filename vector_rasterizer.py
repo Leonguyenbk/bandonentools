@@ -15,6 +15,7 @@ import math
 
 import numpy as np
 from PIL import Image, ImageDraw
+import proj_setup  # Khắc phục xung đột PROJ_LIB / GDAL_DATA
 from rasterio.transform import from_bounds
 
 from kml_vector_reader import VectorFeature
@@ -30,7 +31,7 @@ EARTH_RADIUS = 6378137.0
 MAX_CANVAS_DIMENSION = 15000
 SUPERSAMPLE = 2  # vẽ ở độ phân giải gấp đôi rồi downsample — khử răng cưa đường/nét
 
-DEFAULT_MIN_ZOOM = 15
+DEFAULT_MIN_ZOOM = 14
 DEFAULT_MAX_ZOOM = 20
 
 

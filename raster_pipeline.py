@@ -20,6 +20,7 @@ from typing import Iterator
 
 import mercantile
 import numpy as np
+import proj_setup  # Khắc phục xung đột PROJ_LIB / GDAL_DATA
 import rasterio
 from PIL import Image
 from rasterio.control import GroundControlPoint
@@ -33,6 +34,9 @@ TILE_SIZE = 256
 WEB_MERCATOR_EQUATOR_CIRCUMFERENCE = 2 * math.pi * 6378137.0
 DEFAULT_MIN_ZOOM_FLOOR = 10
 DEFAULT_MAX_ZOOM_CEIL = 21
+# Zoom nhỏ nhất luôn được tạo tile để còn nhìn thấy bản đồ khi thu nhỏ,
+# giúp dễ tìm vị trí (trước đây ~16, quá gần nên khó định vị).
+NAV_MIN_ZOOM = 14
 
 
 class GeoreferencedOverlay:
@@ -123,7 +127,7 @@ def compute_zoom_range(overlays_3857: list[GeoreferencedOverlay]) -> tuple[int, 
     tile_resolution_at_zoom0 = WEB_MERCATOR_EQUATOR_CIRCUMFERENCE / TILE_SIZE
     raw_zoom = math.log2(tile_resolution_at_zoom0 / best_resolution)
     max_zoom = max(DEFAULT_MIN_ZOOM_FLOOR, min(DEFAULT_MAX_ZOOM_CEIL, round(raw_zoom)))
-    min_zoom = max(DEFAULT_MIN_ZOOM_FLOOR, max_zoom - 4)
+    min_zoom = min(NAV_MIN_ZOOM, max(DEFAULT_MIN_ZOOM_FLOOR, max_zoom - 4))
     return min_zoom, max_zoom
 
 

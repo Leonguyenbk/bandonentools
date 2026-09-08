@@ -21,7 +21,7 @@ def make_rectangle_geojson(west: float, south: float, east: float, north: float)
 def register_sheet(
     cfg: ToolConfig,
     ma_xa: str,
-    so_to: int,
+    so_to: int | str,
     geom_geojson: dict,
     tile_url: str,
     tile_version: int,
