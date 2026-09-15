@@ -27,6 +27,7 @@ def register_sheet(
     tile_version: int,
     min_zoom: int,
     max_zoom: int,
+    ghi_chu: str | None = None,
 ) -> dict:
     response = requests.post(
         f"{cfg.webgis_api_url}/api/ban-do-nen/register",
@@ -39,6 +40,7 @@ def register_sheet(
             "tile_version": tile_version,
             "min_zoom": min_zoom,
             "max_zoom": max_zoom,
+            "ghi_chu": ghi_chu,
         },
         timeout=30,
     )

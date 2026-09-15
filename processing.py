@@ -60,6 +60,7 @@ class FileJob:
     filename: str
     ma_xa: str = ""
     so_to: str = ""
+    ten_hien_thi: str = ""
     status: str = "Chờ"  # Chờ | Đang đọc KMZ | Đang tạo tile | Đang upload | Đang đăng ký | Hoàn thành | Lỗi
     message: str = ""
     tile_count: int = 0
@@ -253,6 +254,7 @@ def process_one(cfg: ToolConfig | None, job: FileJob, options: ProcessOptions, o
         webgis_client.register_sheet(
             cfg, job.ma_xa.strip(), so_to_api, geom, tile_url,
             options.tile_version, min_zoom, max_zoom,
+            ghi_chu=job.ten_hien_thi.strip() or None,
         )
 
         total_time = t_gen_elapsed + t_total_upload

@@ -51,7 +51,9 @@ python -m venv .venv
 1. **Chọn KMZ...** hoặc **Chọn thư mục...** (tự nhận mọi file `.kmz` trong thư mục).
 2. Số tờ được **tự suy từ tên file** (cụm số cuối cùng trong tên, vd `24169_15.kmz` → `15`,
    `To_14.kmz` → `14`). Nếu suy sai/thiếu, chọn dòng trong bảng rồi sửa ở khung
-   "Sửa dòng đang chọn" → **Cập nhật dòng**.
+   "Sửa dòng đang chọn" → **Cập nhật dòng**. Trường **Tên hiển thị** mặc định lấy từ
+   tên file (bỏ phần mở rộng), có thể sửa trước khi upload; WebGIS dùng tên này trong
+   danh sách lọc tờ bản đồ.
 3. **Kiểm tra tất cả** — chỉ đọc KMZ (không vẽ ảnh/cắt tile/upload), báo có `GroundOverlay`
    (ảnh có sẵn) hay dữ liệu vector (sẽ tự vẽ) + tọa độ hợp lệ, trước khi chạy thật.
 4. **Tùy chọn Max Zoom & Luồng Upload**:

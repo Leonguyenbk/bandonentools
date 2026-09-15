@@ -25,12 +25,13 @@ from vn2000_crs import VN_PROVINCES_DATA, find_province_by_code
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-COLUMNS = ("stt", "file", "ma_xa", "so_to", "status", "detail")
+COLUMNS = ("stt", "file", "ma_xa", "so_to", "ten_hien_thi", "status", "detail")
 COLUMN_LABELS = {
     "stt": "STT",
     "file": "Tên File KMZ / KML / GeoTIFF",
     "ma_xa": "Mã xã",
     "so_to": "Số tờ",
+    "ten_hien_thi": "Tên hiển thị",
     "status": "Trạng thái",
     "detail": "Chi tiết / Tiến độ",
 }
@@ -404,6 +405,9 @@ class App(ctk.CTk):
         self.tree.heading("so_to", text="Số Tờ")
         self.tree.column("so_to", width=80, anchor="center")
 
+        self.tree.heading("ten_hien_thi", text="Tên Hiển Thị")
+        self.tree.column("ten_hien_thi", width=180, anchor="w")
+
         self.tree.heading("status", text="Trạng Thái")
         self.tree.column("status", width=140, anchor="w")
 
@@ -447,7 +451,11 @@ class App(ctk.CTk):
 
         ctk.CTkLabel(inner, text="Số tờ:", font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 4))
         self.edit_so_to_entry = ctk.CTkEntry(inner, width=80, height=28)
-        self.edit_so_to_entry.pack(side="left", padx=(0, 12))
+        self.edit_so_to_entry.pack(side="left", padx=(0, 10))
+
+        ctk.CTkLabel(inner, text="Tên hiển thị:", font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 4))
+        self.edit_ten_hien_thi_entry = ctk.CTkEntry(inner, width=170, height=28)
+        self.edit_ten_hien_thi_entry.pack(side="left", padx=(0, 12))
 
         btn_update = ctk.CTkButton(
             inner,
@@ -581,6 +589,7 @@ class App(ctk.CTk):
             filename=filename,
             ma_xa=default_ma_xa,
             so_to=infer_so_to_from_filename(filename),
+            ten_hien_thi=os.path.splitext(filename)[0],
         )
         self.jobs.append(job)
         idx = len(self.jobs)
@@ -595,7 +604,10 @@ class App(ctk.CTk):
             except ValueError:
                 idx = 1
         detail = job.error or job.message
-        return (str(idx), job.filename, job.ma_xa, job.so_to, job.status, detail)
+        return (
+            str(idx), job.filename, job.ma_xa, job.so_to,
+            job.ten_hien_thi, job.status, detail,
+        )
 
     def _refresh_row(self, job: FileJob) -> None:
         row_id = self.row_id_by_job.get(id(job))
@@ -640,6 +652,7 @@ class App(ctk.CTk):
         self.lbl_selected_file.configure(text="(Chưa chọn file)")
         self.edit_ma_xa_entry.delete(0, "end")
         self.edit_so_to_entry.delete(0, "end")
+        self.edit_ten_hien_thi_entry.delete(0, "end")
         self.progress_bar.set(0.0)
         self.lbl_progress_status.configure(text="Trạng thái: Sẵn sàng")
         self._update_stats()
@@ -652,6 +665,8 @@ class App(ctk.CTk):
             self.edit_ma_xa_entry.insert(0, job.ma_xa)
             self.edit_so_to_entry.delete(0, "end")
             self.edit_so_to_entry.insert(0, job.so_to)
+            self.edit_ten_hien_thi_entry.delete(0, "end")
+            self.edit_ten_hien_thi_entry.insert(0, job.ten_hien_thi)
 
     def _selected_job(self) -> Optional[FileJob]:
         selection = self.tree.selection()
@@ -668,6 +683,7 @@ class App(ctk.CTk):
             return
         job.ma_xa = self.edit_ma_xa_entry.get().strip()
         job.so_to = self.edit_so_to_entry.get().strip()
+        job.ten_hien_thi = self.edit_ten_hien_thi_entry.get().strip()
         self._refresh_row(job)
 
     # ---------------------------------------------------------------
