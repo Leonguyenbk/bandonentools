@@ -13,13 +13,11 @@ from dataclasses import dataclass, field
 import geotiff_reader
 import kml_vector_reader
 import kmz_reader
+import local_uploader
 import raster_pipeline
-import storage_uploader
 import vector_rasterizer
 import webgis_client
 from config import ToolConfig
-
-_SO_TO_RE = re.compile(r"(\d+)(?!.*\d)")
 
 TIFF_EXTS = (".tif", ".tiff")
 
@@ -29,29 +27,10 @@ def is_geotiff_path(path: str) -> bool:
 
 
 def infer_so_to_from_filename(filename: str) -> str:
-    """Suy số tờ từ tên file:
-    Hỗ trợ cả số nguyên lẫn số tờ có chữ/ký tự phụ (vd:
-    '24169_15.kmz' -> '15', '24169_02.kmz' -> '02', 'To_14.kmz' -> '14',
-    'To_1A.kmz' -> '1A', 'To_1-1.kmz' -> '1-1', 'BDDC_To_05A.tif' -> '05A').
-    Trả '' nếu không tìm thấy số nào để người dùng tự nhập.
-    """
-    stem = filename.rsplit(".", 1)[0]
-    # 1. Mẫu có tiền tố To rõ ràng: To_14, To14A, To-1-1, BDDC_To_05A
-    m = re.search(r"(?:^|[_\-\s])to[_\-\s]*([0-9]+[a-zA-Z0-9_\-]*)", stem, re.IGNORECASE)
-    if m:
-        return m.group(1).strip("_-")
-    # 2. Mẫu sau mã xã (4-5 chữ số): 24169_15, 24169-02A
-    m = re.search(r"^\d{4,5}[_\-\s]+([0-9]+[a-zA-Z0-9_\-]*)", stem)
-    if m:
-        return m.group(1).strip("_-")
-    # 3. Cụm số kèm hậu tố chữ/gạch cuối cùng: vd 24169_15 -> 15, To_1A -> 1A
-    m = re.search(r"(\d+[a-zA-Z0-9\-_]*)$", stem)
-    if m:
-        return m.group(1).strip("_-")
-    m = re.search(r"(\d+[a-zA-Z]?)(?!.*\d)", stem)
-    if m:
-        return m.group(1)
-    return ""
+    """Số tờ = lấy đúng tên file (bỏ phần .kmz/.kml/.tif) — không tách suy
+    ra số riêng như trước (dễ nhầm/lấy sai số khi tên file có nhiều số).
+    Giữ nguyên cả tên để người vận hành tra lại đúng file gốc dễ dàng."""
+    return filename.rsplit(".", 1)[0]
 
 
 @dataclass
@@ -72,8 +51,7 @@ class ProcessOptions:
     tile_version: int = 1
     min_zoom: int | None = None
     max_zoom: int | None = None
-    upload_workers: int = 32
-    export_local_dir: str | None = None  # Nếu có giá trị -> xuất ra ổ đĩa máy tính, không upload S3
+    export_local_dir: str | None = None  # Nếu có giá trị -> xuất ra ổ đĩa máy tính, không upload lên WebGIS
     geotiff_src_crs: str | None = None  # Ghi đè CRS nguồn cho file .tif (vd "EPSG:9218" hoặc "Đắk Nông" hoặc "108.5")
     geotiff_force_override: bool = True  # Ép buộc áp dụng CRS đã chọn thay vì dùng metadata trong file TIF
 
@@ -211,10 +189,10 @@ def process_one(cfg: ToolConfig | None, job: FileJob, options: ProcessOptions, o
             return
 
         # -------------------------------------------------------------
-        # Chế độ 2: Upload lên Supabase Storage + Đăng ký WebGIS
+        # Chế độ 2: Upload lên WebGIS backend (máy chủ tự lưu trữ) + Đăng ký
         # -------------------------------------------------------------
         if cfg is None:
-            job.error = "Chưa có cấu hình kết nối Supabase/WebGIS"
+            job.error = "Chưa có cấu hình kết nối WebGIS"
             _set("Lỗi", job.error)
             return
 
@@ -229,11 +207,10 @@ def process_one(cfg: ToolConfig | None, job: FileJob, options: ProcessOptions, o
             speed = uploaded / elapsed
             _set("Đang upload", f"{uploaded}/{total} tile ({speed:.0f} tile/s)")
 
-        result = storage_uploader.upload_tiles(
+        result = local_uploader.upload_tiles(
             cfg,
             key_prefix,
             tiles,
-            max_workers=options.upload_workers,
             on_progress=_progress,
         )
         if result.failed_keys:

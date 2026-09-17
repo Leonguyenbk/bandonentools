@@ -1,8 +1,9 @@
 # Bản đồ nền — Tool KMZ → XYZ Tiles
 
 Tool desktop Windows (Tkinter) đọc file KMZ (MicroStation xuất từ DGN), tự lấy tọa độ
-WGS84, dựng ảnh EPSG:3857, sinh tile XYZ, upload thẳng lên Supabase Storage, rồi tự đăng
-ký với WebGIS (`/api/ban-do-nen/register`). Hỗ trợ **2 dạng KMZ**, tự nhận diện:
+WGS84, dựng ảnh EPSG:3857, sinh tile XYZ, upload thẳng lên backend WebGIS (máy chủ tự lưu
+trữ, qua endpoint `/api/ban-do-nen/upload-tiles`), rồi tự đăng ký với WebGIS
+(`/api/ban-do-nen/register`). Hỗ trợ **2 dạng KMZ**, tự nhận diện:
 
 1. **KMZ có `GroundOverlay`** (đã kèm sẵn ảnh render) — georeference ảnh đó theo
    `LatLonBox`/`gx:LatLonQuad` rồi reproject sang 3857.
@@ -28,19 +29,13 @@ python -m venv .venv
 ## Cấu hình (bắt buộc trước khi chạy)
 
 1. Copy `config.example.json` thành `config.local.json` (file này đã có trong `.gitignore`,
-   **không commit lên git** — chứa khóa Storage).
+   **không commit lên git** — chứa mã xác thực).
 2. Điền các trường:
-   - `webgis_api_url`: URL backend WebGIS (vd `https://webgis-thua-dat-api.onrender.com`).
-   - `import_token`: đúng giá trị `IMPORT_TOKEN` đang cấu hình trên backend (`backend/.env`
-     hoặc biến môi trường Render).
-   - `s3_endpoint`, `s3_access_key_id`, `s3_secret_access_key`: lấy tại
-     **Supabase Dashboard → Project Settings → Storage → S3 Connection** — đây là cặp khóa
-     **RIÊNG của Storage**, KHÔNG phải Service Role Key của database (an toàn hơn nếu lỡ lộ,
-     vì repo WebGIS đang public trên GitHub).
-   - `s3_bucket`: `ban-do-nen-tiles` (phải tạo bucket này trên Supabase Dashboard trước,
-     đánh dấu **Public**, nếu chưa có).
-   - `tile_public_base_url`: `https://<project-ref>.supabase.co/storage/v1/object/public/ban-do-nen-tiles`
-     (URL public để WebGIS/Leaflet tải tile — khác với `s3_endpoint` dùng để upload).
+   - `webgis_api_url`: URL backend WebGIS (vd `https://www.kh2959bmt.net`).
+   - `import_token`: đúng giá trị `IMPORT_TOKEN` đang cấu hình trên backend (`backend/.env`).
+   - `tile_public_base_url`: `<webgis_api_url>/tiles/ban-do-nen` (URL public để
+     WebGIS/Leaflet tải tile — backend tự serve từ đĩa, xem
+     `app/routes/ban_do_nen_routes.py`).
 
 ## Chạy
 
@@ -49,15 +44,16 @@ python -m venv .venv
 ```
 
 1. **Chọn KMZ...** hoặc **Chọn thư mục...** (tự nhận mọi file `.kmz` trong thư mục).
-2. Số tờ được **tự suy từ tên file** (cụm số cuối cùng trong tên, vd `24169_15.kmz` → `15`,
-   `To_14.kmz` → `14`). Nếu suy sai/thiếu, chọn dòng trong bảng rồi sửa ở khung
-   "Sửa dòng đang chọn" → **Cập nhật dòng**.
+2. Số tờ mặc định lấy **đúng tên file** (bỏ phần đuôi `.kmz`/`.tif`), vd
+   `24169_15A.kmz` → `24169_15A` — dễ tra lại đúng file gốc, không tự tách
+   suy ra số riêng (dễ nhầm khi tên file có nhiều số). Muốn đổi thì chọn
+   dòng trong bảng rồi sửa ở khung "Sửa dòng đang chọn" → **Cập nhật dòng**.
 3. **Kiểm tra tất cả** — chỉ đọc KMZ (không vẽ ảnh/cắt tile/upload), báo có `GroundOverlay`
    (ảnh có sẵn) hay dữ liệu vector (sẽ tự vẽ) + tọa độ hợp lệ, trước khi chạy thật.
 4. **Tùy chọn Max Zoom & Luồng Upload**:
    - **Max Zoom**: "Tự động" (khuyên dùng cho ảnh có sẵn) hoặc chọn mức cố định như `19` (cực nhanh, ít tile) hoặc `20`/`21` (độ chi tiết cao nhất).
    - **Luồng upload**: Mặc định `32 luồng` (tải song song cực nhanh), có thể chọn `16`, `48`, `64 luồng`.
-5. **Tạo XYZ + Upload** — xử lý tự động: georeference ảnh có sẵn HOẶC tự vẽ vector thành ảnh → EPSG:3857 → sinh tile song song đa luồng (bỏ qua tile hoàn toàn trong suốt) → upload Storage song song (32 luồng, connection pool HTTP Keep-Alive, retry tự động) → chỉ khi **upload xong 100%** mới gọi API đăng ký với WebGIS.
+5. **Tạo XYZ + Upload** — xử lý tự động: georeference ảnh có sẵn HOẶC tự vẽ vector thành ảnh → EPSG:3857 → sinh tile song song đa luồng (bỏ qua tile hoàn toàn trong suốt) → đóng gói toàn bộ tile của 1 tờ thành 1 file zip, upload 1 request duy nhất lên backend WebGIS → chỉ khi **upload xong** mới gọi API đăng ký với WebGIS.
 6. Theo dõi cột "Trạng thái"/"Chi tiết" từng dòng (hiển thị số tile/giây, thời gian cắt & upload) + thanh tiến độ tổng phía dưới.
 
 Có sẵn 1 file mẫu `test_data/to12.kmz` (ảnh giả lập) để thử luồng "Kiểm tra tất cả" ngay
@@ -69,8 +65,9 @@ sau khi cài đặt, trước khi dùng KMZ thật.
   chạy lại từ đầu file đó (tile trùng key sẽ tự ghi đè, không lỗi, chỉ tốn thời gian upload
   lại).
 - Chưa xuất báo cáo Excel/CSV.
-- Chưa có chức năng dọn tile version cũ trên Storage (tăng `tile_version` mỗi lần xử lý lại
-  cùng 1 tờ, nhưng KHÔNG tự xóa version cũ — dọn thủ công trên Supabase Storage nếu cần).
+- Chưa có chức năng dọn tile version cũ (tăng `tile_version` mỗi lần xử lý lại cùng 1 tờ,
+  nhưng KHÔNG tự xóa version cũ — dọn thủ công trong
+  `backend/data/ban_do_nen_tiles/{ma_xa}/{so_to}/` trên máy chủ nếu cần).
 - Chưa ước tính dung lượng/số tile trước khi chạy (có thể gọi
   `raster_pipeline.count_tiles(bbox, min_zoom, max_zoom)` thủ công qua Python nếu cần kiểm
   tra nhanh).
@@ -81,10 +78,10 @@ Tool đã được cấu hình để đóng gói thành 1 file `.exe` duy nhất
 
 - **Thư mục file chạy**: `dist/`
   - `dist\BandoNen_Tool.exe` (File chạy chính)
-  - `dist\config.local.json` (File cấu hình S3 / WebGIS URL)
+  - `dist\config.local.json` (File cấu hình WebGIS URL/token)
 - **Tự build lại bất cứ lúc nào**: Chạy file `build.bat` hoặc lệnh:
   ```bat
-  .venv\Scripts\pyinstaller --noconfirm --onefile --windowed --name "BandoNen_Tool" --collect-all rasterio --collect-all mercantile --copy-metadata boto3 app_gui.py
+  .venv\Scripts\pyinstaller --noconfirm --onefile --windowed --name "BandoNen_Tool" --collect-all rasterio --collect-all mercantile app_gui.py
   ```
 
 ---

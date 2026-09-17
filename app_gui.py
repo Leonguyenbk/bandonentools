@@ -1,5 +1,5 @@
 """Bản Đồ Nền Pro — Desktop Tool (CustomTkinter)
-Chuyển đổi KMZ / KML -> XYZ Tile -> Upload Supabase Storage -> Đăng ký WebGIS
+Chuyển đổi KMZ / KML -> XYZ Tile -> Upload WebGIS backend -> Đăng ký WebGIS
 Hoặc Xuất trực tiếp ra thư mục ổ đĩa máy tính (Local Tiles).
 """
 
@@ -147,7 +147,7 @@ class App(ctk.CTk):
         if self.cfg is not None:
             self.cfg_badge = ctk.CTkLabel(
                 right_box,
-                text=f"🟢 WebGIS & S3: Sẵn sàng ({self.cfg.s3_bucket})",
+                text="🟢 WebGIS: Sẵn sàng",
                 font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
                 text_color="#34d399",
                 fg_color="#064e3b",
@@ -204,19 +204,6 @@ class App(ctk.CTk):
         )
         self.zoom_menu.set("Tự động")
         self.zoom_menu.pack(side="left", padx=(0, 14))
-
-        # Luồng Upload
-        ctk.CTkLabel(r1, text="Luồng upload:", font=ctk.CTkFont(size=12, weight="bold")).pack(side="left", padx=(0, 6))
-        self.workers_menu = ctk.CTkOptionMenu(
-            r1,
-            values=["16 luồng", "32 luồng", "48 luồng", "64 luồng"],
-            width=110,
-            height=32,
-            fg_color="#334155",
-            button_color="#475569",
-        )
-        self.workers_menu.set("32 luồng")
-        self.workers_menu.pack(side="left", padx=(0, 14))
 
         # Mode Selector
         ctk.CTkLabel(r1, text="Chế độ:", font=ctk.CTkFont(size=12, weight="bold")).pack(side="left", padx=(0, 6))
@@ -548,7 +535,7 @@ class App(ctk.CTk):
         try:
             self.cfg = load_config()
             self.cfg_badge.configure(
-                text=f"🟢 WebGIS & S3: Sẵn sàng ({self.cfg.s3_bucket})",
+                text="🟢 WebGIS: Sẵn sàng",
                 text_color="#34d399",
                 fg_color="#064e3b",
             )
@@ -755,9 +742,6 @@ class App(ctk.CTk):
         max_zoom_val = self.zoom_menu.get().strip()
         max_zoom = int(max_zoom_val) if max_zoom_val.isdigit() else None
 
-        workers_val = self.workers_menu.get().split()[0]
-        upload_workers = int(workers_val) if workers_val.isdigit() else 32
-
         mode = self.mode_selector.get()
         export_local_dir = self.local_export_dir if "Local" in mode else None
 
@@ -767,7 +751,6 @@ class App(ctk.CTk):
         options = ProcessOptions(
             tile_version=1,
             max_zoom=max_zoom,
-            upload_workers=upload_workers,
             export_local_dir=export_local_dir,
             geotiff_src_crs=tif_crs,
             geotiff_force_override=force_crs,
