@@ -46,11 +46,32 @@ def get_resource_path(relative_path: str) -> str:
 
 
 class App(ctk.CTk):
+    def _dat_kich_thuoc_theo_man_hinh(
+        self, rong_mac_dinh: int, cao_mac_dinh: int, rong_toi_thieu: int, cao_toi_thieu: int
+    ) -> None:
+        """Co cửa sổ theo đúng kích thước màn hình thật — kích thước mặc
+        định cố định có thể CAO HƠN vùng làm việc thật của màn hình nhỏ
+        (laptop/máy ảo ~1366x768, trừ taskbar còn ~720px), khiến phần dưới
+        cửa sổ (nút bấm) bị che khuất."""
+        man_rong = self.winfo_screenwidth()
+        man_cao = self.winfo_screenheight()
+        # Chừa ~80px cho taskbar + viền cửa sổ. KHÔNG ép ngược lên
+        # rong/cao_toi_thieu — màn hình nhỏ hơn cả kích thước tối thiểu vẫn
+        # phải ưu tiên vừa màn hình. Sàn 600x500 chỉ để tránh cửa sổ 0px.
+        rong = max(600, min(rong_mac_dinh, man_rong - 40))
+        # Trừ hao 110px: geometry() không gồm thanh tiêu đề cửa sổ
+        # (~35-40px thực đo) — đo thực tế xác nhận 80 không đủ, cửa sổ vẫn
+        # đè lên taskbar ~27px.
+        cao = max(500, min(cao_mac_dinh, man_cao - 110))
+        x = max(0, (man_rong - rong) // 2)
+        y = 10  # neo gần đỉnh, tránh canh giữa đẩy mép dưới đè lên taskbar
+        self.geometry(f"{rong}x{cao}+{x}+{y}")
+        self.minsize(min(rong_toi_thieu, rong), min(cao_toi_thieu, cao))
+
     def __init__(self, cfg: Optional[ToolConfig]):
         super().__init__()
         self.title("BẢN ĐỒ NỀN PRO — KMZ / KML / GeoTIFF → XYZ Tile Converter")
-        self.geometry("1140x750")
-        self.minsize(1000, 640)
+        self._dat_kich_thuoc_theo_man_hinh(1140, 750, 1000, 640)
 
         self.cfg = cfg
         self.jobs: list[FileJob] = []
