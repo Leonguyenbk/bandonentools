@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import re
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
@@ -20,6 +21,36 @@ import webgis_client
 from config import ToolConfig
 
 TIFF_EXTS = (".tif", ".tiff")
+
+# Backend (ban_do_nen_service.py::_PATH_SEGMENT_RE) chỉ nhận ma_xa/so_to
+# gồm chữ không dấu, số, gạch dưới, gạch ngang — dùng thẳng làm tên thư
+# mục trên đĩa server. Số tờ lấy từ TÊN FILE (infer_so_to_from_filename)
+# nên rất hay dính dấu tiếng Việt/khoảng trắng/ngoặc — trước đây gửi
+# nguyên văn lên, bị backend từ chối (400) nhưng người dùng chỉ thấy dòng
+# chung chung "Upload lỗi — chưa đăng ký", không biết lý do thật.
+_PATH_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def normalize_path_segment(value: str) -> str:
+    """Bỏ dấu tiếng Việt, thay mọi ký tự không phải chữ/số/_/- bằng "_",
+    gộp "_" liên tiếp, cắt bớt nếu dài hơn 64 ký tự — khớp đúng
+    _PATH_SEGMENT_RE phía backend. Dùng cho số tờ (tự suy từ tên file nên
+    hay lẫn dấu/khoảng trắng); KHÔNG dùng để tự sửa mã xã (mã hành chính
+    chính thức, sai 1 ký tự là sai xã — phải báo lỗi rõ cho người dùng tự
+    sửa, không tự đoán)."""
+    # "đ"/"Đ" không có dạng phân rã NFKD về "d" (Unicode coi là chữ cái
+    # riêng, không phải "d" + dấu) — phải thay tay trước khi NFKD, nếu
+    # không sẽ bị loại bỏ thành "_" thay vì "d".
+    value = value.replace("đ", "d").replace("Đ", "D")
+    nfkd = unicodedata.normalize("NFKD", value)
+    no_diacritics = "".join(c for c in nfkd if not unicodedata.combining(c))
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", no_diacritics).strip("_-")
+    safe = re.sub(r"_{2,}", "_", safe)
+    return safe[:64] or "1"
+
+
+def is_valid_path_segment(value: str) -> bool:
+    return bool(_PATH_SEGMENT_RE.match(value or ""))
 
 
 def is_geotiff_path(path: str) -> bool:
@@ -95,8 +126,14 @@ def process_one(cfg: ToolConfig | None, job: FileJob, options: ProcessOptions, o
 
     # Hỗ trợ số tờ linh hoạt: cả chuỗi (vd 1A, 01, 1-1, phu_02) lẫn số nguyên
     so_to_raw = (job.so_to or "").strip() or infer_so_to_from_filename(job.filename) or "1"
-    # Chuẩn hoá ký tự an toàn cho thư mục và URL (loại bỏ ký tự cấm hệ điều hành: \ / : * ? " < > |)
-    so_to_safe = re.sub(r'[\\/:*?"<>|]', "_", so_to_raw).strip(" _-") or "1"
+    # Số tờ tự suy ra từ TÊN FILE nên rất hay dính dấu tiếng Việt/khoảng
+    # trắng/ngoặc (vd "Tờ 12 (chính).kmz") — backend chỉ nhận chữ không
+    # dấu/số/_/- (dùng thẳng làm tên thư mục trên đĩa). Chuẩn hoá NGAY ở
+    # đây và ghi lại vào job.so_to để người dùng THẤY giá trị thật sự sẽ
+    # gửi đi (trước đây gửi nguyên văn, bị backend âm thầm từ chối 400 mà
+    # tool chỉ báo chung chung "Upload lỗi — chưa đăng ký").
+    so_to_safe = normalize_path_segment(so_to_raw)
+    job.so_to = so_to_safe
 
     is_local_export = bool(options.export_local_dir)
     if not is_local_export:
@@ -106,6 +143,15 @@ def process_one(cfg: ToolConfig | None, job: FileJob, options: ProcessOptions, o
             return
         if not (job.so_to or "").strip():
             job.error = "Thiếu số tờ"
+            _set("Lỗi", job.error)
+            return
+        # Mã xã là mã hành chính chính thức — KHÔNG tự sửa (sai 1 ký tự là
+        # sai sang xã khác), chỉ báo lỗi rõ để người dùng tự kiểm tra lại.
+        if not is_valid_path_segment(job.ma_xa.strip()):
+            job.error = (
+                f"Mã xã '{job.ma_xa.strip()}' chứa ký tự không hợp lệ "
+                "(chỉ được chữ không dấu, số, gạch dưới, gạch ngang) — sửa lại ô Mã xã"
+            )
             _set("Lỗi", job.error)
             return
 
@@ -214,7 +260,12 @@ def process_one(cfg: ToolConfig | None, job: FileJob, options: ProcessOptions, o
             on_progress=_progress,
         )
         if result.failed_keys:
-            job.error = f"Upload lỗi {len(result.failed_keys)}/{result.total} tile — chưa đăng ký"
+            # Hiện NGUYÊN VĂN lý do thật (failed_keys chứa thông điệp dễ hiểu
+            # sẵn — vd "Upload thất bại (400): ma_xa/so_to chỉ được chứa
+            # chữ, số..." hoặc "Lỗi kết nối: ...") — trước đây chỉ đếm số
+            # tile lỗi, không cho biết lý do, người dùng không tự sửa được.
+            ly_do = "; ".join(result.failed_keys[:3])
+            job.error = f"Upload lỗi {len(result.failed_keys)}/{result.total} tile — chưa đăng ký. {ly_do}"
             _set("Lỗi", job.error)
             return
 
@@ -222,10 +273,13 @@ def process_one(cfg: ToolConfig | None, job: FileJob, options: ProcessOptions, o
         _set("Đang đăng ký", f"Đã upload {result.uploaded} tile ({t_total_upload:.1f}s)")
         tile_url = f"{cfg.tile_public_base_url}/{key_prefix}/{{z}}/{{x}}/{{y}}.png"
         geom = webgis_client.make_rectangle_geojson(west, south, east, north)
+        # PHẢI dùng so_to_safe (đã chuẩn hoá, giống hệt giá trị trong
+        # key_prefix/tile_url ở trên) — dùng nhầm so_to_raw ở đây sẽ khiến
+        # số tờ lưu trong CSDL lệch với đường dẫn tile thật trên server.
         try:
-            so_to_api: int | str = int(so_to_raw)
+            so_to_api: int | str = int(so_to_safe)
         except ValueError:
-            so_to_api = so_to_raw
+            so_to_api = so_to_safe
 
         webgis_client.register_sheet(
             cfg, job.ma_xa.strip(), so_to_api, geom, tile_url,
