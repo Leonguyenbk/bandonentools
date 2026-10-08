@@ -18,7 +18,12 @@ from rasterio.io import MemoryFile
 from rasterio.transform import Affine
 from rasterio.warp import Resampling, calculate_default_transform, reproject, transform_bounds
 
-from raster_pipeline import GeoreferencedOverlay
+from raster_pipeline import (
+    DEFAULT_MAX_ZOOM_CEIL,
+    TILE_SIZE,
+    WEB_MERCATOR_EQUATOR_CIRCUMFERENCE,
+    GeoreferencedOverlay,
+)
 from vn2000_crs import (
     find_province_by_code,
     make_vn2000_crs,
@@ -30,6 +35,13 @@ MAX_TIF_BYTES = 1024 * 1024 * 1024  # 1GB
 MAX_REPROJECT_PIXELS = 200_000_000
 
 DST_CRS = "EPSG:3857"
+
+# Độ phân giải (m/pixel, xấp xỉ ở xích đạo — cùng công thức
+# compute_zoom_range dùng) ứng với zoom tối đa tool còn cắt tile tới
+# (DEFAULT_MAX_ZOOM_CEIL). Ảnh nguồn mịn hơn mức này không hiển thị thêm
+# chi tiết nào cả — đọc hạ mẫu ngay (decimated read) thay vì tải full-res
+# vào RAM rồi mới biết là thừa.
+_RES_AT_MAX_ZOOM = WEB_MERCATOR_EQUATOR_CIRCUMFERENCE / (TILE_SIZE * (2 ** DEFAULT_MAX_ZOOM_CEIL))
 
 
 class GeoTiffError(Exception):
@@ -48,10 +60,18 @@ def _stretch_to_uint8(arr: np.ndarray) -> np.ndarray:
     return (((data - lo) / (hi - lo)) * 255.0).clip(0, 255).astype(np.uint8)
 
 
-def _read_rgba(src, transform: Affine) -> np.ndarray:
-    """Chuẩn hoá dataset rasterio về mảng (4, H, W) uint8 RGBA."""
+def _read_rgba(
+    src, transform: Affine, out_height: int | None = None, out_width: int | None = None
+) -> Tuple[np.ndarray, Affine]:
+    """Chuẩn hoá dataset rasterio về mảng (4, H, W) uint8 RGBA. Nếu
+    out_height/out_width khác kích thước gốc, dùng decimated read của
+    rasterio/GDAL (hạ mẫu NGAY lúc đọc, không tải full-res vào RAM trước)
+    — trả kèm transform đã co đúng theo tỉ lệ hạ mẫu."""
     count = src.count
-    height, width = src.height, src.width
+    src_height, src_width = src.height, src.width
+    out_height = out_height or src_height
+    out_width = out_width or src_width
+    downsample = (out_height, out_width) != (src_height, src_width)
 
     colormap = None
     if count == 1:
@@ -60,7 +80,17 @@ def _read_rgba(src, transform: Affine) -> np.ndarray:
         except (ValueError, KeyError):
             colormap = None
 
-    raw = src.read()  # (count, H, W)
+    if downsample:
+        # Dữ liệu palette (colormap) là CHỈ SỐ màu — nội suy song tuyến
+        # tính sẽ pha trộn chỉ số thành giá trị rác, bắt buộc dùng nearest.
+        read_resampling = Resampling.nearest if colormap else Resampling.bilinear
+        raw = src.read(out_shape=(count, out_height, out_width), resampling=read_resampling)
+        out_transform = transform * Affine.scale(src_width / out_width, src_height / out_height)
+    else:
+        raw = src.read()  # (count, H, W)
+        out_transform = transform
+
+    height, width = out_height, out_width
 
     if colormap:
         lut = np.zeros((256, 4), dtype=np.uint8)
@@ -89,12 +119,15 @@ def _read_rgba(src, transform: Affine) -> np.ndarray:
         rgba = np.concatenate([gray, gray, gray, alpha], axis=0)
 
     try:
-        mask = src.dataset_mask()
+        if downsample:
+            mask = src.dataset_mask(out_shape=(out_height, out_width), resampling=Resampling.nearest)
+        else:
+            mask = src.dataset_mask()
         rgba[3] = np.minimum(rgba[3], mask)
     except Exception:
         pass
 
-    return np.ascontiguousarray(rgba)
+    return np.ascontiguousarray(rgba), out_transform
 
 
 def _open_dataset(
@@ -235,10 +268,28 @@ def read_geotiff_as_overlay(
         data, override_crs, file_path, force_override, ma_xa
     )
     try:
-        rgba = _read_rgba(src, transform)
+        # Tính độ phân giải SAU reproject Ở ĐỘ PHÂN GIẢI GỐC — chỉ cần
+        # metadata (width/height/bounds), KHÔNG đọc pixel — để biết ảnh có
+        # mịn hơn mức zoom tối đa tool còn dùng tới hay không, TRƯỚC KHI
+        # đọc. Ảnh mịn hơn thì hạ mẫu ngay lúc đọc (decimated read), tránh
+        # tải full-res vào RAM một cách vô ích (và tránh chạm trần
+        # MAX_REPROJECT_PIXELS chỉ vì mật độ pixel nguồn quá cao chứ không
+        # phải vì phạm vi địa lý thật sự lớn).
+        native_transform, _native_w, _native_h = calculate_default_transform(
+            src_crs, DST_CRS, src.width, src.height, *bounds
+        )
+        native_res = abs(native_transform.a)
+
+        read_h, read_w = src.height, src.width
+        if native_res < _RES_AT_MAX_ZOOM:
+            scale = native_res / _RES_AT_MAX_ZOOM
+            read_h = max(1, round(src.height * scale))
+            read_w = max(1, round(src.width * scale))
+
+        rgba, transform = _read_rgba(src, transform, out_height=read_h, out_width=read_w)
 
         dst_transform, dst_w, dst_h = calculate_default_transform(
-            src_crs, DST_CRS, src.width, src.height, *bounds
+            src_crs, DST_CRS, read_w, read_h, *bounds
         )
 
         if dst_w * dst_h > MAX_REPROJECT_PIXELS:

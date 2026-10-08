@@ -38,6 +38,13 @@ DEFAULT_MAX_ZOOM_CEIL = 21
 # giúp dễ tìm vị trí (trước đây ~16, quá gần nên khó định vị).
 NAV_MIN_ZOOM = 14
 
+# Độ phân giải (m/pixel, xấp xỉ ở xích đạo) ứng với zoom tối đa tool còn
+# cắt tile tới — ảnh GroundOverlay nhúng trong KMZ mịn hơn mức này (ảnh
+# drone/orthophoto độ phân giải cao) không hiển thị thêm chi tiết nào cả,
+# chỉ tốn RAM và dễ chạm giới hạn "decompression bomb" mặc định của
+# Pillow (~89 triệu pixel) khi mở — hạ mẫu ngay để tránh cả 2.
+_RES_AT_MAX_ZOOM = WEB_MERCATOR_EQUATOR_CIRCUMFERENCE / (TILE_SIZE * (2 ** DEFAULT_MAX_ZOOM_CEIL))
+
 
 class GeoreferencedOverlay:
     __slots__ = ("array_3857", "transform_3857")
@@ -47,14 +54,60 @@ class GeoreferencedOverlay:
         self.transform_3857 = transform_3857
 
 
-def _load_rgba_array(image_bytes: bytes) -> np.ndarray:
-    image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+def _overlay_bbox_wgs84(overlay: GroundOverlayInfo) -> tuple[float, float, float, float]:
+    if overlay.is_quad:
+        lons = [p[0] for p in overlay.quad_lonlat]
+        lats = [p[1] for p in overlay.quad_lonlat]
+        return min(lons), min(lats), max(lons), max(lats)
+    return overlay.west, overlay.south, overlay.east, overlay.north
+
+
+def _target_pixel_size(west: float, south: float, east: float, north: float) -> tuple[int, int]:
+    """Kích thước pixel (W, H) tối đa còn CÓ ÍCH cho 1 phạm vi địa lý ở độ
+    phân giải zoom tối đa — quy đổi gần đúng độ kinh/vĩ -> mét bằng
+    cos(vĩ độ trung bình), đủ chính xác cho mục đích hạ mẫu (không cần
+    chính xác tuyệt đối như lúc reproject thật)."""
+    lat_mid = (south + north) / 2.0
+    m_per_deg_lat = 111_320.0
+    m_per_deg_lon = 111_320.0 * math.cos(math.radians(lat_mid))
+    width_m = max(1.0, (east - west) * m_per_deg_lon)
+    height_m = max(1.0, (north - south) * m_per_deg_lat)
+    return max(1, round(width_m / _RES_AT_MAX_ZOOM)), max(1, round(height_m / _RES_AT_MAX_ZOOM))
+
+
+def _load_rgba_array(image_bytes: bytes, target_size: tuple[int, int] | None = None) -> np.ndarray:
+    """Đọc ảnh -> mảng RGBA (4, H, W). target_size=(w, h): nếu ảnh gốc có
+    nhiều pixel hơn mức còn dùng tới, hạ mẫu ngay để tránh tốn RAM/chạm
+    giới hạn decompression-bomb của Pillow khi ảnh rất lớn."""
+    old_limit = Image.MAX_IMAGE_PIXELS
+    try:
+        # File KMZ do chính người dùng đưa vào (không phải ảnh tải từ
+        # nguồn không tin cậy) — tắt tạm giới hạn "decompression bomb" của
+        # Pillow, bù lại bằng hạ mẫu ngay dưới đây (không giữ ảnh full-res
+        # lâu hơn mức cần thiết).
+        Image.MAX_IMAGE_PIXELS = None
+        image = Image.open(io.BytesIO(image_bytes))
+        if target_size is not None and image.size[0] * image.size[1] > target_size[0] * target_size[1]:
+            # draft(): chỉ thật sự tăng tốc với JPEG (giải mã ở độ phân
+            # giải thấp hơn ngay trong lúc decode, qua DCT) — PNG/khác thì
+            # Pillow bỏ qua, vẫn phải giải mã full-res 1 lần rồi resize
+            # bên dưới mới hạ mẫu được.
+            image.draft("RGBA", target_size)
+        image = image.convert("RGBA")
+        if target_size is not None and (
+            image.size[0] > target_size[0] or image.size[1] > target_size[1]
+        ):
+            image = image.resize(target_size, Image.BILINEAR)
+    finally:
+        Image.MAX_IMAGE_PIXELS = old_limit
+
     arr = np.array(image)  # H, W, 4
     return np.transpose(arr, (2, 0, 1))  # 4, H, W
 
 
 def georeference_and_reproject(overlay: GroundOverlayInfo) -> GeoreferencedOverlay:
-    bands = _load_rgba_array(overlay.image_bytes)
+    target_size = _target_pixel_size(*_overlay_bbox_wgs84(overlay))
+    bands = _load_rgba_array(overlay.image_bytes, target_size=target_size)
     _, height, width = bands.shape
 
     with MemoryFile() as memfile:
