@@ -31,10 +31,7 @@ def get_config_path() -> Path:
 REQUIRED_KEYS = (
     "webgis_api_url",
     "import_token",
-    "s3_endpoint",
-    "s3_access_key_id",
-    "s3_secret_access_key",
-    "s3_bucket",
+    "tile_public_base_url",
 )
 
 
@@ -42,12 +39,7 @@ REQUIRED_KEYS = (
 class ToolConfig:
     webgis_api_url: str
     import_token: str
-    s3_endpoint: str
-    s3_access_key_id: str
-    s3_secret_access_key: str
-    s3_bucket: str
-    s3_region: str = "auto"
-    tile_public_base_url: str = ""
+    tile_public_base_url: str
 
 
 def load_config() -> ToolConfig:
@@ -70,12 +62,7 @@ def load_config() -> ToolConfig:
     return ToolConfig(
         webgis_api_url=raw["webgis_api_url"].rstrip("/"),
         import_token=raw["import_token"],
-        s3_endpoint=raw["s3_endpoint"],
-        s3_access_key_id=raw["s3_access_key_id"],
-        s3_secret_access_key=raw["s3_secret_access_key"],
-        s3_bucket=raw["s3_bucket"],
-        s3_region=raw.get("s3_region", "auto"),
-        tile_public_base_url=raw.get("tile_public_base_url", ""),
+        tile_public_base_url=raw["tile_public_base_url"].rstrip("/"),
     )
 
 
@@ -85,5 +72,5 @@ if __name__ == "__main__":
     except SystemExit as exc:
         print(exc, file=sys.stderr)
         raise
-    print("Config OK:", cfg.webgis_api_url, cfg.s3_bucket)
+    print("Config OK:", cfg.webgis_api_url, cfg.tile_public_base_url)
 

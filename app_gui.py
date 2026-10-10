@@ -1,5 +1,5 @@
 """Bản Đồ Nền Pro — Desktop Tool (CustomTkinter)
-Chuyển đổi KMZ / KML -> XYZ Tile -> Upload Supabase Storage -> Đăng ký WebGIS
+Chuyển đổi KMZ / KML -> XYZ Tile -> Upload WebGIS backend -> Đăng ký WebGIS
 Hoặc Xuất trực tiếp ra thư mục ổ đĩa máy tính (Local Tiles).
 """
 
@@ -47,11 +47,32 @@ def get_resource_path(relative_path: str) -> str:
 
 
 class App(ctk.CTk):
+    def _dat_kich_thuoc_theo_man_hinh(
+        self, rong_mac_dinh: int, cao_mac_dinh: int, rong_toi_thieu: int, cao_toi_thieu: int
+    ) -> None:
+        """Co cửa sổ theo đúng kích thước màn hình thật — kích thước mặc
+        định cố định có thể CAO HƠN vùng làm việc thật của màn hình nhỏ
+        (laptop/máy ảo ~1366x768, trừ taskbar còn ~720px), khiến phần dưới
+        cửa sổ (nút bấm) bị che khuất."""
+        man_rong = self.winfo_screenwidth()
+        man_cao = self.winfo_screenheight()
+        # Chừa ~80px cho taskbar + viền cửa sổ. KHÔNG ép ngược lên
+        # rong/cao_toi_thieu — màn hình nhỏ hơn cả kích thước tối thiểu vẫn
+        # phải ưu tiên vừa màn hình. Sàn 600x500 chỉ để tránh cửa sổ 0px.
+        rong = max(600, min(rong_mac_dinh, man_rong - 40))
+        # Trừ hao 110px: geometry() không gồm thanh tiêu đề cửa sổ
+        # (~35-40px thực đo) — đo thực tế xác nhận 80 không đủ, cửa sổ vẫn
+        # đè lên taskbar ~27px.
+        cao = max(500, min(cao_mac_dinh, man_cao - 110))
+        x = max(0, (man_rong - rong) // 2)
+        y = 10  # neo gần đỉnh, tránh canh giữa đẩy mép dưới đè lên taskbar
+        self.geometry(f"{rong}x{cao}+{x}+{y}")
+        self.minsize(min(rong_toi_thieu, rong), min(cao_toi_thieu, cao))
+
     def __init__(self, cfg: Optional[ToolConfig]):
         super().__init__()
         self.title("BẢN ĐỒ NỀN PRO — KMZ / KML / GeoTIFF → XYZ Tile Converter")
-        self.geometry("1140x750")
-        self.minsize(1000, 640)
+        self._dat_kich_thuoc_theo_man_hinh(1140, 750, 1000, 640)
 
         self.cfg = cfg
         self.jobs: list[FileJob] = []
@@ -148,7 +169,7 @@ class App(ctk.CTk):
         if self.cfg is not None:
             self.cfg_badge = ctk.CTkLabel(
                 right_box,
-                text=f"🟢 WebGIS & S3: Sẵn sàng ({self.cfg.s3_bucket})",
+                text="🟢 WebGIS: Sẵn sàng",
                 font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
                 text_color="#34d399",
                 fg_color="#064e3b",
@@ -205,19 +226,6 @@ class App(ctk.CTk):
         )
         self.zoom_menu.set("Tự động")
         self.zoom_menu.pack(side="left", padx=(0, 14))
-
-        # Luồng Upload
-        ctk.CTkLabel(r1, text="Luồng upload:", font=ctk.CTkFont(size=12, weight="bold")).pack(side="left", padx=(0, 6))
-        self.workers_menu = ctk.CTkOptionMenu(
-            r1,
-            values=["16 luồng", "32 luồng", "48 luồng", "64 luồng"],
-            width=110,
-            height=32,
-            fg_color="#334155",
-            button_color="#475569",
-        )
-        self.workers_menu.set("32 luồng")
-        self.workers_menu.pack(side="left", padx=(0, 14))
 
         # Mode Selector
         ctk.CTkLabel(r1, text="Chế độ:", font=ctk.CTkFont(size=12, weight="bold")).pack(side="left", padx=(0, 6))
@@ -556,7 +564,7 @@ class App(ctk.CTk):
         try:
             self.cfg = load_config()
             self.cfg_badge.configure(
-                text=f"🟢 WebGIS & S3: Sẵn sàng ({self.cfg.s3_bucket})",
+                text="🟢 WebGIS: Sẵn sàng",
                 text_color="#34d399",
                 fg_color="#064e3b",
             )
@@ -771,9 +779,6 @@ class App(ctk.CTk):
         max_zoom_val = self.zoom_menu.get().strip()
         max_zoom = int(max_zoom_val) if max_zoom_val.isdigit() else None
 
-        workers_val = self.workers_menu.get().split()[0]
-        upload_workers = int(workers_val) if workers_val.isdigit() else 32
-
         mode = self.mode_selector.get()
         export_local_dir = self.local_export_dir if "Local" in mode else None
 
@@ -783,7 +788,6 @@ class App(ctk.CTk):
         options = ProcessOptions(
             tile_version=1,
             max_zoom=max_zoom,
-            upload_workers=upload_workers,
             export_local_dir=export_local_dir,
             geotiff_src_crs=tif_crs,
             geotiff_force_override=force_crs,

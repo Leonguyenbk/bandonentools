@@ -4,10 +4,7 @@ from PyInstaller.utils.hooks import copy_metadata
 
 datas = [('assets', 'assets')]
 binaries = []
-hiddenimports = ['PIL', 'PIL.Image', 'PIL.ImageTk', 'customtkinter', 'darkdetect', 'boto3', 'botocore', 'requests', 'urllib3', 'geotiff_reader', 'vn2000_crs', 'proj_setup']
-
-datas += copy_metadata('boto3')
-datas += copy_metadata('botocore')
+hiddenimports = ['PIL', 'PIL.Image', 'PIL.ImageTk', 'customtkinter', 'darkdetect', 'requests', 'urllib3', 'geotiff_reader', 'vn2000_crs', 'proj_setup']
 
 tmp_ret = collect_all('customtkinter')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
