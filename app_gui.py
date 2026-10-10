@@ -54,16 +54,24 @@ class App(ctk.CTk):
         định cố định có thể CAO HƠN vùng làm việc thật của màn hình nhỏ
         (laptop/máy ảo ~1366x768, trừ taskbar còn ~720px), khiến phần dưới
         cửa sổ (nút bấm) bị che khuất."""
-        man_rong = self.winfo_screenwidth()
-        man_cao = self.winfo_screenheight()
+        # CustomTkinter nhân geometry() với hệ số zoom Windows (125%/150% trên
+        # laptop), còn winfo_screen*() trả pixel thật — phải quy đổi về cùng
+        # đơn vị, nếu không cửa sổ vẫn to hơn màn hình.
+        try:
+            he_so = self._get_window_scaling()
+        except Exception:
+            he_so = 1.0
+        he_so = he_so if he_so and he_so > 0 else 1.0
+        man_rong = int(self.winfo_screenwidth() / he_so)
+        man_cao = int(self.winfo_screenheight() / he_so)
         # Chừa ~80px cho taskbar + viền cửa sổ. KHÔNG ép ngược lên
         # rong/cao_toi_thieu — màn hình nhỏ hơn cả kích thước tối thiểu vẫn
         # phải ưu tiên vừa màn hình. Sàn 600x500 chỉ để tránh cửa sổ 0px.
-        rong = max(600, min(rong_mac_dinh, man_rong - 40))
+        rong = max(500, min(rong_mac_dinh, man_rong - 40))
         # Trừ hao 110px: geometry() không gồm thanh tiêu đề cửa sổ
         # (~35-40px thực đo) — đo thực tế xác nhận 80 không đủ, cửa sổ vẫn
         # đè lên taskbar ~27px.
-        cao = max(500, min(cao_mac_dinh, man_cao - 110))
+        cao = max(400, min(cao_mac_dinh, man_cao - 110))
         x = max(0, (man_rong - rong) // 2)
         y = 10  # neo gần đỉnh, tránh canh giữa đẩy mép dưới đè lên taskbar
         self.geometry(f"{rong}x{cao}+{x}+{y}")
@@ -89,9 +97,12 @@ class App(ctk.CTk):
         # Build UI
         self._build_header()
         self._build_control_card()
-        self._build_table_section()
-        self._build_edit_card()
+        # Khung nút + khung sửa dòng neo đáy và pack TRƯỚC bảng: khi cửa sổ
+        # thiếu chỗ, pack co widget pack sau cùng trước — để bảng co lại chứ
+        # không cắt mất nút bấm.
         self._build_bottom_section()
+        self._build_edit_card()
+        self._build_table_section()
 
         # Start queue polling
         self._poll_queue()
@@ -399,6 +410,7 @@ class App(ctk.CTk):
             show="headings",
             selectmode="browse",
             style="Custom.Treeview",
+            height=5,  # chiều cao tối thiểu nhỏ; expand=True vẫn giãn khi đủ chỗ
         )
 
         self.tree.heading("stt", text="#")
@@ -424,6 +436,15 @@ class App(ctk.CTk):
 
         self.tree.pack(side="left", fill="both", expand=True)
         self.tree.bind("<<TreeviewSelect>>", self.on_select_row)
+        # Copy lỗi: chuột phải = menu, nhấp đúp = xem chi tiết, Ctrl+C = copy dòng
+        self.tree.bind("<Button-3>", self._on_tree_right_click)
+        self.tree.bind("<Double-1>", lambda _e: self.on_show_detail())
+        self.tree.bind("<Control-c>", lambda _e: self.on_copy_selected())
+
+        self.tree_menu = tk.Menu(self, tearoff=0)
+        self.tree_menu.add_command(label="🔍 Xem chi tiết lỗi", command=self.on_show_detail)
+        self.tree_menu.add_command(label="📋 Copy lỗi dòng này  (Ctrl+C)", command=self.on_copy_selected)
+        self.tree_menu.add_command(label="📋 Copy lỗi của TẤT CẢ các dòng", command=self.on_copy_all_errors)
 
         scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
@@ -431,7 +452,7 @@ class App(ctk.CTk):
 
     def _build_edit_card(self) -> None:
         self.edit_card = ctk.CTkFrame(self, corner_radius=10, fg_color="#1e2029", height=48)
-        self.edit_card.pack(fill="x", padx=14, pady=(2, 6))
+        self.edit_card.pack(side="bottom", fill="x", padx=14, pady=(2, 6))
 
         inner = ctk.CTkFrame(self.edit_card, fg_color="transparent")
         inner.pack(fill="x", padx=12, pady=6)
@@ -479,7 +500,7 @@ class App(ctk.CTk):
 
     def _build_bottom_section(self) -> None:
         bottom_card = ctk.CTkFrame(self, corner_radius=10, fg_color="#1a1c23")
-        bottom_card.pack(fill="x", padx=14, pady=(2, 12))
+        bottom_card.pack(side="bottom", fill="x", padx=14, pady=(2, 12))
 
         # Row 1: Actions & Status text
         r1 = ctk.CTkFrame(bottom_card, fg_color="transparent")
@@ -520,7 +541,19 @@ class App(ctk.CTk):
             state="disabled",
             command=self.on_stop,
         )
-        self.btn_stop.pack(side="left", padx=(0, 16))
+        self.btn_stop.pack(side="left", padx=(0, 8))
+
+        btn_copy_err = ctk.CTkButton(
+            r1,
+            text="📋 Copy Lỗi",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color="#7c3aed",
+            hover_color="#6d28d9",
+            height=36,
+            width=110,
+            command=self.on_copy_all_errors,
+        )
+        btn_copy_err.pack(side="left", padx=(0, 16))
 
         self.lbl_progress_status = ctk.CTkLabel(
             r1,
@@ -556,7 +589,7 @@ class App(ctk.CTk):
         messagebox.showwarning(
             "Cảnh Báo Cấu Hình",
             "Chưa tìm thấy file config.local.json hợp lệ!\n\n"
-            "• Chế độ Cloud (Upload S3 & Đăng ký WebGIS) sẽ không khả dụng.\n"
+            "• Chế độ Upload & Đăng ký WebGIS sẽ không khả dụng.\n"
             "• Bạn vẫn có thể sử dụng chế độ 'Xuất Ổ Đĩa (Local XYZ)' để tạo tile ra máy tính.",
         )
 
@@ -683,6 +716,83 @@ class App(ctk.CTk):
         row_id = selection[0]
         index = self.tree.index(row_id)
         return self.jobs[index] if 0 <= index < len(self.jobs) else None
+
+    # ---------------------------------------------------------------
+    # Copy / xem chi tiết lỗi
+    # ---------------------------------------------------------------
+
+    def _job_report(self, job: FileJob) -> str:
+        detail = job.error or job.message or "(không có chi tiết)"
+        return (
+            f"File: {job.filename}\n"
+            f"Mã xã: {job.ma_xa} | Số tờ: {job.so_to} | Tên hiển thị: {job.ten_hien_thi}\n"
+            f"Trạng thái: {job.status}\n"
+            f"Chi tiết: {detail}"
+        )
+
+    def _copy_to_clipboard(self, text: str) -> None:
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.update()  # giữ nội dung clipboard trên Windows
+
+    def _on_tree_right_click(self, event) -> None:
+        row_id = self.tree.identify_row(event.y)
+        if row_id:
+            self.tree.selection_set(row_id)
+            self.tree.focus(row_id)
+        try:
+            self.tree_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.tree_menu.grab_release()
+
+    def on_copy_selected(self) -> None:
+        job = self._selected_job()
+        if not job:
+            messagebox.showinfo("Chọn dòng", "Hãy chọn 1 dòng trong bảng để copy.")
+            return
+        self._copy_to_clipboard(self._job_report(job))
+        self.lbl_progress_status.configure(text=f"Đã copy: {job.filename}")
+
+    def on_copy_all_errors(self) -> None:
+        loi = [j for j in self.jobs if j.error or j.status == "Lỗi"]
+        if not loi:
+            messagebox.showinfo("Không có lỗi", "Hiện không có dòng nào bị lỗi để copy.")
+            return
+        cfg_url = self.cfg.webgis_api_url if self.cfg else "(chưa có config)"
+        text = f"WebGIS: {cfg_url} | Số file lỗi: {len(loi)}/{len(self.jobs)}\n\n" + "\n\n".join(
+            self._job_report(j) for j in loi
+        )
+        self._copy_to_clipboard(text)
+        self.lbl_progress_status.configure(text=f"Đã copy lỗi của {len(loi)} file")
+
+    def on_show_detail(self) -> None:
+        job = self._selected_job()
+        if not job:
+            return
+        text = self._job_report(job)
+
+        win = ctk.CTkToplevel(self)
+        win.title(f"Chi tiết — {job.filename}")
+        win.geometry("640x320")
+        win.transient(self)
+        win.after(100, win.lift)
+
+        box = ctk.CTkTextbox(win, wrap="word", font=ctk.CTkFont(family="Consolas", size=12))
+        box.pack(fill="both", expand=True, padx=12, pady=(12, 6))
+        box.insert("1.0", text)
+        box.configure(state="disabled")  # vẫn bôi đen + Ctrl+C được
+
+        btns = ctk.CTkFrame(win, fg_color="transparent")
+        btns.pack(fill="x", padx=12, pady=(0, 12))
+
+        def _copy() -> None:
+            self._copy_to_clipboard(text)
+            btn_copy.configure(text="✅ Đã copy")
+
+        btn_copy = ctk.CTkButton(btns, text="📋 Copy", width=110, command=_copy)
+        btn_copy.pack(side="left")
+        ctk.CTkButton(btns, text="Đóng", width=90, fg_color="#475569",
+                      hover_color="#334155", command=win.destroy).pack(side="right")
 
     def on_update_row(self) -> None:
         job = self._selected_job()

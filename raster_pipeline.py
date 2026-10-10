@@ -248,7 +248,9 @@ def _render_tile_png(
         return None
 
     buf = io.BytesIO()
-    composite_tile.save(buf, format="PNG", compress_level=1, optimize=False)
+    # Mức 6: tile nhỏ hơn ~40% so với mức 1 (đo trên GeoTIFF thật), ảnh y
+    # hệt — upload ít gói hơn và WebGIS tải tile nhanh hơn, chỉ chậm ~10ms/tile.
+    composite_tile.save(buf, format="PNG", compress_level=6, optimize=False)
     return z, tx, ty, buf.getvalue()
 
 

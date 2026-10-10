@@ -266,7 +266,10 @@ def process_one(cfg: ToolConfig | None, job: FileJob, options: ProcessOptions, o
             # chữ, số..." hoặc "Lỗi kết nối: ...") — trước đây chỉ đếm số
             # tile lỗi, không cho biết lý do, người dùng không tự sửa được.
             ly_do = "; ".join(result.failed_keys[:3])
-            job.error = f"Upload lỗi {len(result.failed_keys)}/{result.total} tile — chưa đăng ký. {ly_do}"
+            job.error = (
+                f"Upload {result.total} tile KHÔNG thành công nên tờ này CHƯA được "
+                f"đăng ký lên WebGIS (sửa lỗi rồi chạy lại). Lý do: {ly_do}"
+            )
             _set("Lỗi", job.error)
             return
 
